@@ -24,13 +24,15 @@ class SO101FollowerDoraRobot(Robot):
 
 
     def __init__(self, config: SO101FollowerDoraRobotConfig):
+        super().__init__(config)
         self.config = config
         self.robot_type = self.config.type
         self.use_videos = self.config.use_videos
         self.microphones = self.config.microphones
 
-        self.follower_arms = {}
-        self.follower_arms['main_follower'] = self.config.follower_arms["main"]
+        # self.follower_arms = {}
+        # self.follower_arms['main_follower'] = self.config.follower_arms["main"]
+        self.motors = config.motors
 
         self.cameras = make_cameras_from_configs(self.config.cameras)
         
@@ -41,13 +43,13 @@ class SO101FollowerDoraRobot(Robot):
         self.robot_dora_node.start()
 
         
-        self.is_connected = False
+        self.connected = False
         self.logs = {}
 
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        return {f"{motor}.pos": float for _arm, bus in self.follower_arms.items() for motor in bus.motors}
+        return {f"{motor}.pos": float for motor in self.motors}
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -108,11 +110,15 @@ class SO101FollowerDoraRobot(Robot):
     #         },
     #     }
     
+    @property
+    def is_connected(self) -> bool:
+        return self.connected
+    
     def connect(self):
-        timeout = 50  # 统一的超时时间（秒）
+        timeout = 20  # 统一的超时时间（秒）
         start_time = time.perf_counter()
 
-        if self.is_connected:
+        if self.connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         # 定义所有需要等待的条件及其错误信息
@@ -133,9 +139,9 @@ class SO101FollowerDoraRobot(Robot):
             (
                 lambda: all(
                     any(name in key for key in self.robot_dora_node.recv_joint)
-                    for name in self.follower_arms
+                    for name in self.motors
                 ),
-                lambda: [name for name in self.follower_arms if not any(name in key for key in self.robot_dora_node.recv_joint)],
+                lambda: [name for name in self.motors if not any(name in key for key in self.robot_dora_node.recv_joint)],
                 "等待从臂关节角度超时"
             ),
         ]
@@ -177,7 +183,7 @@ class SO101FollowerDoraRobot(Robot):
                         if i == 0:
                             received = [name for name in self.cameras if name not in missing]
                         else:
-                            received = [name for name in self.follower_arms if name not in missing]
+                            received = [name for name in self.motors if name not in missing]
 
                         # 构造错误信息
                         msg = f"{base_msg}: 未收到 [{', '.join(missing)}]; 已收到 [{', '.join(received)}]"
@@ -213,7 +219,7 @@ class SO101FollowerDoraRobot(Robot):
         arm_data_types = ["从臂关节角度",]
         for i, data_type in enumerate(arm_data_types, 1):
             if conditions[i][0]():
-                arm_received = [name for name in self.follower_arms 
+                arm_received = [name for name in self.motors 
                             if any(name in key for key in (self.robot_dora_node.recv_joint,)[i-1])]
                 success_messages.append(f"{data_type}: {', '.join(arm_received)}")
         
@@ -228,8 +234,28 @@ class SO101FollowerDoraRobot(Robot):
         for i in range(self.status.specifications.arm.number):
             self.status.specifications.arm.information[i].is_connect = True
 
-        self.is_connected = True
+        self.connected = True
     
+    @property
+    def is_calibrated(self) -> bool:
+        """Whether the robot is currently calibrated or not. Should be always `True` if not applicable"""
+        return True
+
+    def calibrate(self) -> None:
+        """
+        Calibrate the robot if applicable. If not, this should be a no-op.
+
+        This method should collect any necessary data (e.g., motor offsets) and update the
+        :pyattr:`calibration` dictionary accordingly.
+        """
+        pass
+
+    def configure(self) -> None:
+        """
+        Apply any one-time or runtime configuration to the robot.
+        This may include setting motor parameters, control modes, or initial state.
+        """
+        pass
     # @property
     # def features(self):
     #     return {**self.motor_features, **self.camera_features}
@@ -242,90 +268,90 @@ class SO101FollowerDoraRobot(Robot):
     # def num_cameras(self):
     #     return len(self.cameras)
     
-    def teleop_step(
-        self, record_data=False, 
-    ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    # def teleop_step(
+    #     self, record_data=False, 
+    # ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
 
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "Aloha is not connected. You need to run `robot.connect()`."
-            )
+    #     if not self.connected:
+    #         raise DeviceNotConnectedError(
+    #             "Aloha is not connected. You need to run `robot.connect()`."
+    #         )
         
-        for key in self.robot_dora_node.recv_images_status:
-            self.robot_dora_node.recv_images_status[key] = max(0, self.robot_dora_node.recv_images_status[key] - 1)
+    #     for key in self.robot_dora_node.recv_images_status:
+    #         self.robot_dora_node.recv_images_status[key] = max(0, self.robot_dora_node.recv_images_status[key] - 1)
 
-        for key in self.robot_dora_node.recv_joint_status:
-            self.robot_dora_node.recv_joint_status[key] = max(0, self.robot_dora_node.recv_joint_status[key] - 1)
+    #     for key in self.robot_dora_node.recv_joint_status:
+    #         self.robot_dora_node.recv_joint_status[key] = max(0, self.robot_dora_node.recv_joint_status[key] - 1)
 
-        if not record_data:
-            return
+    #     if not record_data:
+    #         return
 
-        follower_joint = {}
-        for name in self.follower_arms:
-            for match_name in self.robot_dora_node.recv_joint:
-                if name in match_name:
-                    now = time.perf_counter()
+    #     follower_joint = {}
+    #     for name in self.follower_arms:
+    #         for match_name in self.robot_dora_node.recv_joint:
+    #             if name in match_name:
+    #                 now = time.perf_counter()
 
-                    byte_array = np.zeros(6, dtype=np.float32)
-                    pose_read = self.robot_dora_node.recv_joint[match_name]
+    #                 byte_array = np.zeros(6, dtype=np.float32)
+    #                 pose_read = self.robot_dora_node.recv_joint[match_name]
 
-                    byte_array[:6] = pose_read[:]
-                    byte_array = np.round(byte_array, 3)
+    #                 byte_array[:6] = pose_read[:]
+    #                 byte_array = np.round(byte_array, 3)
                     
-                    follower_joint[name] = torch.from_numpy(byte_array)
+    #                 follower_joint[name] = torch.from_numpy(byte_array)
 
-                    self.logs[f"read_follower_{name}_joint_dt_s"] = time.perf_counter() - now
+    #                 self.logs[f"read_follower_{name}_joint_dt_s"] = time.perf_counter() - now
                     
-        leader_joint = {}
-        for name in self.leader_arms:
-            for match_name in self.robot_dora_node.recv_joint:
-                if name in match_name:
-                    now = time.perf_counter()
+    #     leader_joint = {}
+    #     for name in self.leader_arms:
+    #         for match_name in self.robot_dora_node.recv_joint:
+    #             if name in match_name:
+    #                 now = time.perf_counter()
 
-                    byte_array = np.zeros(6, dtype=np.float32)
-                    pose_read = self.robot_dora_node.recv_joint[match_name]
+    #                 byte_array = np.zeros(6, dtype=np.float32)
+    #                 pose_read = self.robot_dora_node.recv_joint[match_name]
 
-                    byte_array[:6] = pose_read[:]
-                    byte_array = np.round(byte_array, 3)
+    #                 byte_array[:6] = pose_read[:]
+    #                 byte_array = np.round(byte_array, 3)
                     
-                    leader_joint[name] = torch.from_numpy(byte_array)
+    #                 leader_joint[name] = torch.from_numpy(byte_array)
 
-                    self.logs[f"read_leader_{name}_joint_dt_s"] = time.perf_counter() - now
+    #                 self.logs[f"read_leader_{name}_joint_dt_s"] = time.perf_counter() - now
 
-        #记录当前关节角度
-        state = []
-        for name in self.follower_arms:
-            if name in follower_joint:
-                state.append(follower_joint[name])
-        state = torch.cat(state)
+    #     #记录当前关节角度
+    #     state = []
+    #     for name in self.follower_arms:
+    #         if name in follower_joint:
+    #             state.append(follower_joint[name])
+    #     state = torch.cat(state)
 
-        #将关节目标位置添加到 action 列表中
-        action = []
-        for name in self.leader_arms:
-            if name in leader_joint:
-                action.append(leader_joint[name])
-        action = torch.cat(action)
+    #     #将关节目标位置添加到 action 列表中
+    #     action = []
+    #     for name in self.leader_arms:
+    #         if name in leader_joint:
+    #             action.append(leader_joint[name])
+    #     action = torch.cat(action)
 
-        # Capture images from cameras
-        images = {}
-        for name in self.cameras:
-            now = time.perf_counter()
-            images[name] = self.robot_dora_node.recv_images[name]
-            images[name] = torch.from_numpy(images[name])
-            self.logs[f"read_camera_{name}_dt_s"] = time.perf_counter() - now
+    #     # Capture images from cameras
+    #     images = {}
+    #     for name in self.cameras:
+    #         now = time.perf_counter()
+    #         images[name] = self.robot_dora_node.recv_images[name]
+    #         images[name] = torch.from_numpy(images[name])
+    #         self.logs[f"read_camera_{name}_dt_s"] = time.perf_counter() - now
 
-        # Populate output dictionnaries and format to pytorch
-        obs_dict, action_dict = {}, {}
-        obs_dict["observation.state"] = state
-        action_dict["action"] = action
-        for name in self.cameras:
-            obs_dict[f"observation.images.{name}"] = images[name]
+    #     # Populate output dictionnaries and format to pytorch
+    #     obs_dict, action_dict = {}, {}
+    #     obs_dict["observation.state"] = state
+    #     action_dict["action"] = action
+    #     for name in self.cameras:
+    #         obs_dict[f"observation.images.{name}"] = images[name]
 
-        # print("end teleoperate record")
-        return obs_dict, action_dict
+    #     # print("end teleoperate record")
+    #     return obs_dict, action_dict
     
     def get_observation(self) -> dict[str, Any]:
-        if not self.is_connected:
+        if not self.connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         for key in self.robot_dora_node.recv_images_status:
@@ -339,9 +365,8 @@ class SO101FollowerDoraRobot(Robot):
         obs_dict = {
             f"{motor}.pos": val 
             for name, val in self.robot_dora_node.recv_joint.items() 
-                for _arm, bus in self.follower_arms.items() 
-                    for motor in bus.motors
-                        if motor in name
+                for motor in self.motors
+                    if motor in name
         }
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
@@ -365,20 +390,22 @@ class SO101FollowerDoraRobot(Robot):
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """The provided action is expected to be a vector."""
-        if not self.is_connected:
+        if not self.connected:
             raise DeviceNotConnectedError(
                 f"{self} is not connected. You need to run `robot.connect()`."
             )
 
-        goal_joint = [ val for key, val in action.items() if "joint" in key]
- 
-        goal_joint_numpy = np.array([t.item() for t in goal_joint], dtype=np.float32)
+        goal_joint = [ val for key, val in action.items()]
+
+        
+        goal_joint_numpy = np.array(goal_joint, dtype=np.float32)
         # goal_gripper_numpy = np.array([t.item() for t in goal_gripper], dtype=np.float32)
         # position = np.concatenate([goal_joint_numpy, goal_gripper_numpy], axis=0)
 
-        self.robot_dora_node.dora_send(f"action_joint", goal_joint_numpy, wait_time_s=0.01)
+        logger.debug(f"action: {action}, goal_joint:{goal_joint}, goal_joint_numpy:{goal_joint_numpy}")
+        self.robot_dora_node.dora_send(f"action_joint", goal_joint_numpy)
         
-        return {f"{motor}.pos": val for motor, val in goal_joint.items()}
+        return {f"{motor}.pos": val for motor, val in action.items()}
 
     def update_status(self) -> str:
 
@@ -397,16 +424,16 @@ class SO101FollowerDoraRobot(Robot):
         return self.status.to_json()
 
     def disconnect(self):
-        if not self.is_connected:
+        if not self.connected:
             raise DeviceNotConnectedError(
                 "Robot is not connected. You need to run `robot.connect()` before disconnecting."
             )
 
         self.robot_dora_node.running = False
-        self.robot_dora_node.thread.join()
+        self.robot_dora_node.stop()
 
-        self.is_connected = False
+        self.connected = False
 
     def __del__(self):
-        if getattr(self, "is_connected", False):
+        if getattr(self, "connected", False):
             self.disconnect()

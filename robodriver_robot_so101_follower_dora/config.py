@@ -21,47 +21,42 @@ from lerobot.robots.config import RobotConfig
 from lerobot.cameras import CameraConfig
 from lerobot.cameras.configs import ColorMode
 from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.motors import Motor, MotorNormMode
 
-class ArmConfig():
-    def __init__(self):
-        self.port = None
-        self.motors = None
 
 @RobotConfig.register_subclass("so101_follower_dora")
 @dataclass
 class SO101FollowerDoraRobotConfig(RobotConfig):
-    follower_arms: Dict[str, Dict] = field(
-        default_factory=lambda: {
-            "main": ArmConfig(
-                port="/dev/ttyACM1",
-                motors={
-                    "joint_shoulder_pan": [1, "sts3215"],
-                    "joint_shoulder_lift": [2, "sts3215"],
-                    "joint_elbow_flex": [3, "sts3215"],
-                    "joint_wrist_flex": [4, "sts3215"],
-                    "joint_wrist_roll": [5, "sts3215"],
-                    "joint_gripper": [6, "sts3215"],
-                },
-            ),
+    use_degrees = True
+    norm_mode_body = MotorNormMode.DEGREES if use_degrees else MotorNormMode.RANGE_M100_100
+ 
+    motors: Dict[str, Motor] = field(
+        default_factory=lambda norm_mode_body=norm_mode_body: {
+            "shoulder_pan": Motor(1, "sts3215", norm_mode_body),
+            "shoulder_lift": Motor(2, "sts3215", norm_mode_body),
+            "elbow_flex": Motor(3, "sts3215", norm_mode_body),
+            "wrist_flex": Motor(4, "sts3215", norm_mode_body),
+            "wrist_roll": Motor(5, "sts3215", norm_mode_body),
+            "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
         }
     )
 
     cameras: Dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "image_top": OpenCVCameraConfig(
-                camera_index=0,
+                index_or_path=0,
                 fps=30,
                 width=640,
                 height=480,
             ),
             "image_wrist": OpenCVCameraConfig(
-                camera_index=1,
+                index_or_path=1,
                 fps=30,
                 width=640,
                 height=480,
             ),
             "image_top_dep": OpenCVCameraConfig(
-                camera_index=2,
+                index_or_path=2,
                 fps=30,
                 width=640,
                 height=480,
@@ -76,4 +71,4 @@ class SO101FollowerDoraRobotConfig(RobotConfig):
         }
     )
     
-    super().__post_init__()
+    # super().__post_init__()
